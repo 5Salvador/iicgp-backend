@@ -4,6 +4,7 @@ import { v2 as cloudinary } from "cloudinary";
 import { ObjectId } from "mongodb";
 import { getDB } from "../db/mongo.js";
 import dotenv from "dotenv";
+import fs from "fs";
 
 dotenv.config();
 
@@ -137,6 +138,11 @@ router.post("/upload/cover", upload.single("cover"), async (req, res) => {
       ],
     });
 
+    // Remove arquivo temporário
+    fs.unlink(req.file.path, (err) => {
+      if (err) console.error("Erro ao deletar arquivo temporário:", err);
+    });
+
     res.json({
       url: uploadResult.secure_url,
       public_id: uploadResult.public_id,
@@ -179,6 +185,11 @@ router.post("/upload", upload.single("audio"), async (req, res) => {
 
     const result = await db.collection("tracks").insertOne(track);
 
+    // Remove arquivo temporário
+    fs.unlink(req.file.path, (err) => {
+      if (err) console.error("Erro ao deletar arquivo temporário:", err);
+    });
+
     res.status(201).json({ ...track, _id: result.insertedId });
   } catch (error) {
     console.error("Erro ao fazer upload da faixa:", error);
@@ -211,6 +222,11 @@ router.post("/upload/single", upload.single("audio"), async (req, res) => {
     };
 
     const result = await db.collection("audios").insertOne(audio);
+
+    // Remove arquivo temporário
+    fs.unlink(req.file.path, (err) => {
+      if (err) console.error("Erro ao deletar arquivo temporário:", err);
+    });
 
     res.status(201).json({ ...audio, _id: result.insertedId });
   } catch (error) {
