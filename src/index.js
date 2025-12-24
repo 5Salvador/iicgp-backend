@@ -8,7 +8,10 @@ import teachingsRoutes from "./routes/teachingsRoutes.js";
 import audiosRoutes from "./routes/audiosRoutes.js";
 
 
-dotenv.config();
+
+if (process.env.NODE_ENV !== "production") {
+  dotenv.config();
+}
 const app = express();
 app.use(cors());
 app.use(express.json());
