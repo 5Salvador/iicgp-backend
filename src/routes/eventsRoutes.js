@@ -4,7 +4,6 @@ import { ObjectId } from "mongodb";
 import { getDB } from "../db/mongo.js";
 import { verifyToken } from "../middleware/authMiddleware.js";
 import cloudinary from "../config/cloudinary.js";
-import { upload } from "../middleware/uploadCloudinary.js";
 
 const router = express.Router();
 
@@ -35,24 +34,24 @@ router.post("/", verifyToken, async (req, res) => {
 });
 
 // POST - Upload de flyer (DEVE ESTAR ANTES DO PUT /:id)
-router.post("/:id/flyer", verifyToken, upload.single("flyer"), async (req, res) => {
-  console.log("🎯 POST /:id/flyer chamada! ID:", req.params.id);
-  try {
-    const db = getDB();
-    if (!req.file) {
-      return res.status(400).json({ message: "Nenhum arquivo enviado" });
-    }
-    const result = await db.collection("events").findOneAndUpdate(
-      { _id: new ObjectId(req.params.id) },
-      { $set: { flyer: req.file.path, flyerPublicId: req.file.filename } },
-      { returnDocument: "after" }
-    );
-    res.json(result);
-  } catch (err) {
-    console.error("Erro:", err);
-    res.status(500).json({ message: "Erro ao enviar flyer", error: err.message });
-  }
-});
+// router.post("/:id/flyer", verifyToken, upload.single("flyer"), async (req, res) => {
+//   console.log("🎯 POST /:id/flyer chamada! ID:", req.params.id);
+//   try {
+//     const db = getDB();
+//     if (!req.file) {
+//       return res.status(400).json({ message: "Nenhum arquivo enviado" });
+//     }
+//     const result = await db.collection("events").findOneAndUpdate(
+//       { _id: new ObjectId(req.params.id) },
+//       { $set: { flyer: req.file.path, flyerPublicId: req.file.filename } },
+//       { returnDocument: "after" }
+//     );
+//     res.json(result);
+//   } catch (err) {
+//     console.error("Erro:", err);
+//     res.status(500).json({ message: "Erro ao enviar flyer", error: err.message });
+//   }
+// });
 
 // DELETE - Remover flyer
 router.delete("/:id/flyer", verifyToken, async (req, res) => {
