@@ -121,6 +121,114 @@ router.get("/teachings/:id", async (req, res) => {
 });
 
 /* ======================
+   EDITAR ENSINO
+====================== */
+router.put("/teachings/:id", async (req, res) => {
+  try {
+    const db = getDB();
+
+    if (!ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "ID inválido" });
+    }
+
+    const teachingId = new ObjectId(req.params.id);
+    const updateData = {};
+
+    if (req.body.title) updateData.title = req.body.title;
+    if (req.body.preacher) updateData.preacher = req.body.preacher;
+    if (req.body.category) updateData.category = req.body.category;
+    if (req.body.cover !== undefined) updateData.cover = req.body.cover;
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ error: "Nenhum campo para atualizar" });
+    }
+
+    updateData.updatedAt = new Date();
+
+    const result = await db
+      .collection("teachings_audio")
+      .findOneAndUpdate(
+        { _id: teachingId },
+        { $set: updateData },
+        { returnDocument: "after" }
+      );
+
+    if (!result) {
+      return res.status(404).json({ error: "Ensino não encontrado" });
+    }
+
+    res.json(result);
+  } catch (error) {
+    console.error("Erro ao editar ensino:", error);
+    res.status(500).json({ error: "Erro ao editar ensino" });
+  }
+});
+
+/* ======================
+   DELETAR ENSINO
+====================== */
+router.delete("/teachings/:id", async (req, res) => {
+  try {
+    const db = getDB();
+
+    if (!ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "ID inválido" });
+    }
+
+    const teachingId = new ObjectId(req.params.id);
+
+    // Buscar ensino para pegar o public_id da capa
+    const teaching = await db
+      .collection("teachings_audio")
+      .findOne({ _id: teachingId });
+
+    if (!teaching) {
+      return res.status(404).json({ error: "Ensino não encontrado" });
+    }
+
+    // Buscar todas as faixas associadas
+    const tracks = await db
+      .collection("tracks")
+      .find({ teachingId })
+      .toArray();
+
+    // Deletar capa do Cloudinary se existir
+    if (teaching.cover) {
+      try {
+        const publicId = teaching.cover.split('/').slice(-2).join('/').split('.')[0];
+        await cloudinary.uploader.destroy(publicId);
+      } catch (err) {
+        console.error("Erro ao deletar capa do Cloudinary:", err);
+      }
+    }
+
+    // Deletar áudios das faixas do Cloudinary
+    for (const track of tracks) {
+      if (track.public_id) {
+        try {
+          await cloudinary.uploader.destroy(track.public_id, {
+            resource_type: "video",
+          });
+        } catch (err) {
+          console.error("Erro ao deletar áudio do Cloudinary:", err);
+        }
+      }
+    }
+
+    // Deletar todas as faixas do banco
+    await db.collection("tracks").deleteMany({ teachingId });
+
+    // Deletar o ensino
+    await db.collection("teachings_audio").deleteOne({ _id: teachingId });
+
+    res.json({ message: "Ensino e faixas deletados com sucesso" });
+  } catch (error) {
+    console.error("Erro ao deletar ensino:", error);
+    res.status(500).json({ error: "Erro ao deletar ensino" });
+  }
+});
+
+/* ======================
    UPLOAD DE CAPA
 ====================== */
 router.post("/upload/cover", upload.single("cover"), async (req, res) => {
@@ -133,8 +241,8 @@ router.post("/upload/cover", upload.single("cover"), async (req, res) => {
       resource_type: "image",
       folder: "church_covers",
       transformation: [
-        { width: 500, height: 500, crop: "fill" }, // Redimensiona para 500x500
-        { quality: "auto" }, // Otimiza automaticamente
+        { width: 500, height: 500, crop: "fill" },
+        { quality: "auto" },
       ],
     });
 
@@ -198,6 +306,121 @@ router.post("/upload", upload.single("audio"), async (req, res) => {
 });
 
 /* ======================
+   EDITAR FAIXA
+====================== */
+router.put("/tracks/:id", upload.single("audio"), async (req, res) => {
+  try {
+    const db = getDB();
+
+    if (!ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "ID inválido" });
+    }
+
+    const trackId = new ObjectId(req.params.id);
+    
+    // Buscar faixa existente
+    const existingTrack = await db.collection("tracks").findOne({ _id: trackId });
+    
+    if (!existingTrack) {
+      return res.status(404).json({ error: "Faixa não encontrada" });
+    }
+
+    const updateData = {};
+
+    if (req.body.title) updateData.title = req.body.title;
+    if (req.body.preacher) updateData.preacher = req.body.preacher;
+
+    // Se um novo arquivo de áudio foi enviado
+    if (req.file) {
+      // Deletar áudio antigo do Cloudinary
+      if (existingTrack.public_id) {
+        try {
+          await cloudinary.uploader.destroy(existingTrack.public_id, {
+            resource_type: "video",
+          });
+        } catch (err) {
+          console.error("Erro ao deletar áudio antigo do Cloudinary:", err);
+        }
+      }
+
+      // Upload do novo áudio
+      const uploadResult = await cloudinary.uploader.upload(req.file.path, {
+        resource_type: "video",
+        folder: "church_audios",
+      });
+
+      updateData.url = uploadResult.secure_url;
+      updateData.public_id = uploadResult.public_id;
+
+      // Remove arquivo temporário
+      fs.unlink(req.file.path, (err) => {
+        if (err) console.error("Erro ao deletar arquivo temporário:", err);
+      });
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ error: "Nenhum campo para atualizar" });
+    }
+
+    updateData.updatedAt = new Date();
+
+    const result = await db
+      .collection("tracks")
+      .findOneAndUpdate(
+        { _id: trackId },
+        { $set: updateData },
+        { returnDocument: "after" }
+      );
+
+    res.json(result);
+  } catch (error) {
+    console.error("Erro ao editar faixa:", error);
+    res.status(500).json({ error: "Erro ao editar faixa" });
+  }
+});
+
+/* ======================
+   DELETAR FAIXA
+====================== */
+router.delete("/tracks/:id", async (req, res) => {
+  try {
+    const db = getDB();
+
+    if (!ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "ID inválido" });
+    }
+
+    const trackId = new ObjectId(req.params.id);
+
+    // Buscar faixa para pegar o public_id
+    const track = await db.collection("tracks").findOne({ _id: trackId });
+
+    if (!track) {
+      return res.status(404).json({ error: "Faixa não encontrada" });
+    }
+
+    // Deletar áudio do Cloudinary
+    if (track.public_id) {
+      try {
+        await cloudinary.uploader.destroy(track.public_id, {
+          resource_type: "video",
+        });
+      } catch (err) {
+        console.error("Erro ao deletar áudio do Cloudinary:", err);
+      }
+    }
+
+    // Deletar do banco
+    await db.collection("tracks").deleteOne({ _id: trackId });
+
+    res.json({ message: "Faixa deletada com sucesso" });
+  } catch (error) {
+    console.error("Erro ao deletar faixa:", error);
+    res.status(500).json({ error: "Erro ao deletar faixa" });
+  }
+});
+
+/* ======================
    ÁUDIO SOLO
 ====================== */
 router.post("/upload/single", upload.single("audio"), async (req, res) => {
@@ -251,6 +474,121 @@ router.get("/solo", async (req, res) => {
   } catch (error) {
     console.error("Erro ao listar áudios solo:", error);
     res.status(500).json({ error: "Erro ao listar áudios" });
+  }
+});
+
+/* ======================
+   EDITAR ÁUDIO SOLO
+====================== */
+router.put("/solo/:id", upload.single("audio"), async (req, res) => {
+  try {
+    const db = getDB();
+
+    if (!ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "ID inválido" });
+    }
+
+    const audioId = new ObjectId(req.params.id);
+    
+    // Buscar áudio existente
+    const existingAudio = await db.collection("audios").findOne({ _id: audioId });
+    
+    if (!existingAudio) {
+      return res.status(404).json({ error: "Áudio não encontrado" });
+    }
+
+    const updateData = {};
+
+    if (req.body.title) updateData.title = req.body.title;
+    if (req.body.preacher) updateData.preacher = req.body.preacher;
+
+    // Se um novo arquivo de áudio foi enviado
+    if (req.file) {
+      // Deletar áudio antigo do Cloudinary
+      if (existingAudio.public_id) {
+        try {
+          await cloudinary.uploader.destroy(existingAudio.public_id, {
+            resource_type: "video",
+          });
+        } catch (err) {
+          console.error("Erro ao deletar áudio antigo do Cloudinary:", err);
+        }
+      }
+
+      // Upload do novo áudio
+      const uploadResult = await cloudinary.uploader.upload(req.file.path, {
+        resource_type: "video",
+        folder: "audios",
+      });
+
+      updateData.url = uploadResult.secure_url;
+      updateData.public_id = uploadResult.public_id;
+
+      // Remove arquivo temporário
+      fs.unlink(req.file.path, (err) => {
+        if (err) console.error("Erro ao deletar arquivo temporário:", err);
+      });
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ error: "Nenhum campo para atualizar" });
+    }
+
+    updateData.updatedAt = new Date();
+
+    const result = await db
+      .collection("audios")
+      .findOneAndUpdate(
+        { _id: audioId },
+        { $set: updateData },
+        { returnDocument: "after" }
+      );
+
+    res.json(result);
+  } catch (error) {
+    console.error("Erro ao editar áudio solo:", error);
+    res.status(500).json({ error: "Erro ao editar áudio" });
+  }
+});
+
+/* ======================
+   DELETAR ÁUDIO SOLO
+====================== */
+router.delete("/solo/:id", async (req, res) => {
+  try {
+    const db = getDB();
+
+    if (!ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "ID inválido" });
+    }
+
+    const audioId = new ObjectId(req.params.id);
+
+    // Buscar áudio para pegar o public_id
+    const audio = await db.collection("audios").findOne({ _id: audioId });
+
+    if (!audio) {
+      return res.status(404).json({ error: "Áudio não encontrado" });
+    }
+
+    // Deletar áudio do Cloudinary
+    if (audio.public_id) {
+      try {
+        await cloudinary.uploader.destroy(audio.public_id, {
+          resource_type: "video",
+        });
+      } catch (err) {
+        console.error("Erro ao deletar áudio do Cloudinary:", err);
+      }
+    }
+
+    // Deletar do banco
+    await db.collection("audios").deleteOne({ _id: audioId });
+
+    res.json({ message: "Áudio deletado com sucesso" });
+  } catch (error) {
+    console.error("Erro ao deletar áudio solo:", error);
+    res.status(500).json({ error: "Erro ao deletar áudio" });
   }
 });
 
