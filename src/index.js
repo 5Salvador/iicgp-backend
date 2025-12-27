@@ -6,7 +6,7 @@ import authRoutes from "./routes/authRoutes.js";
 import eventsRoutes from "./routes/eventsRoutes.js";
 import teachingsRoutes from "./routes/teachingsRoutes.js";
 import audiosRoutes from "./routes/audiosRoutes.js";
-
+import cartazRoutes from "./routes/cartazRoute.js";
 
 
 if (process.env.NODE_ENV !== "production") {
@@ -29,6 +29,9 @@ app.use("/api/teachings", teachingsRoutes);
 
 // --- ROTAS DE AUDIOS ---
 app.use("/api/audios", audiosRoutes);
+
+// --- ROTAS DE CARTAZES ---
+app.use("/api/cartazes", cartazRoutes);
 
 // --- Servidor ---
 const PORT = process.env.PORT || 5000;
