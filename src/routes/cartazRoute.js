@@ -57,16 +57,46 @@ const uploadToCloudinary = (buffer, folder) => {
 const router = express.Router();
 
 /* =========================================================
-   GET CARTAZ (PUBLIC)
-   Returns the latest cartaz or null
+   GET ALL CARTAZES (PUBLIC)
+   Returns array of all cartazes, sorted by newest first
 ========================================================= */
 router.get("/", async (req, res) => {
   try {
     const db = getDB();
 
+    const cartazes = await db
+      .collection("cartazes")
+      .find({})
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.json(cartazes);
+  } catch (error) {
+    res.status(500).json({
+      message: "Failed to fetch cartazes",
+      error: error.message,
+    });
+  }
+});
+
+/* =========================================================
+   GET SINGLE CARTAZ BY ID (PUBLIC)
+========================================================= */
+router.get("/:id", async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: "Invalid cartaz ID" });
+    }
+
+    const db = getDB();
+
     const cartaz = await db
       .collection("cartazes")
-      .findOne({}, { sort: { createdAt: -1 } });
+      .findOne({ _id: new ObjectId(req.params.id) });
+
+    if (!cartaz) {
+      return res.status(404).json({ message: "Cartaz not found" });
+    }
 
     res.json(cartaz);
   } catch (error) {
@@ -79,7 +109,7 @@ router.get("/", async (req, res) => {
 
 /* =========================================================
    UPLOAD CARTAZ (ADMIN)
-   Only ONE cartaz active at a time
+   Now supports multiple cartazes
 ========================================================= */
 router.post(
   "/",
@@ -92,16 +122,6 @@ router.post(
       }
 
       const db = getDB();
-
-      // Remove old cartaz (only one active)
-      const oldCartaz = await db
-        .collection("cartazes")
-        .findOne({}, { sort: { createdAt: -1 } });
-
-      if (oldCartaz) {
-        await cloudinary.uploader.destroy(oldCartaz.publicId);
-        await db.collection("cartazes").deleteOne({ _id: oldCartaz._id });
-      }
 
       // Upload new image
       const result = await uploadToCloudinary(
@@ -150,14 +170,49 @@ router.delete("/:id", verifyToken, async (req, res) => {
       return res.status(404).json({ message: "Cartaz not found" });
     }
 
+    // Delete from Cloudinary
     await cloudinary.uploader.destroy(cartaz.publicId);
 
+    // Delete from database
     await db.collection("cartazes").deleteOne({ _id: cartaz._id });
 
     res.json({ message: "Cartaz deleted successfully" });
   } catch (error) {
     res.status(500).json({
       message: "Delete failed",
+      error: error.message,
+    });
+  }
+});
+
+/* =========================================================
+   DELETE ALL CARTAZES (ADMIN) - Optional cleanup endpoint
+========================================================= */
+router.delete("/all/cleanup", verifyToken, async (req, res) => {
+  try {
+    const db = getDB();
+
+    const cartazes = await db.collection("cartazes").find({}).toArray();
+
+    // Delete all from Cloudinary
+    for (const cartaz of cartazes) {
+      try {
+        await cloudinary.uploader.destroy(cartaz.publicId);
+      } catch (err) {
+        console.error(`Failed to delete ${cartaz.publicId} from Cloudinary:`, err);
+      }
+    }
+
+    // Delete all from database
+    const result = await db.collection("cartazes").deleteMany({});
+
+    res.json({ 
+      message: "All cartazes deleted successfully",
+      deletedCount: result.deletedCount
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Cleanup failed",
       error: error.message,
     });
   }
