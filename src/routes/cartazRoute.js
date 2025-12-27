@@ -6,17 +6,21 @@ import multer from "multer";
 import { v2 as cloudinary } from "cloudinary";
 import streamifier from "streamifier";
 
-//Cloudinary connection
+/* ================================
+   Cloudinary configuration
+================================ */
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-//Muler memory storage
+/* ================================
+   Multer (memory storage)
+================================ */
 const storage = multer.memoryStorage();
 
-export const upload = multer({
+const upload = multer({
   storage,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
   fileFilter: (req, file, cb) => {
@@ -24,35 +28,59 @@ export const upload = multer({
       return cb(new Error("Only image files are allowed"));
     }
     cb(null, true);
-  }
+  },
 });
 
-//Upload buffer to Cloudinary
-export const uploadToCloudinary = (buffer, folder) => {
+/* ================================
+   Upload buffer to Cloudinary
+================================ */
+const uploadToCloudinary = (buffer, folder) => {
   return new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
+    const uploadStream = cloudinary.uploader.upload_stream(
       {
         folder,
-        resource_type: "image"
+        resource_type: "image",
       },
       (error, result) => {
-        if (result) resolve(result);
-        else reject(error);
+        if (error) return reject(error);
+        resolve(result);
       }
     );
 
-    streamifier.createReadStream(buffer).pipe(stream);
+    streamifier.createReadStream(buffer).pipe(uploadStream);
   });
 };
 
-
-//Routes starting
+/* ================================
+   Router
+================================ */
 const router = express.Router();
 
+/* =========================================================
+   GET CARTAZ (PUBLIC)
+   Returns the latest cartaz or null
+========================================================= */
+router.get("/", async (req, res) => {
+  try {
+    const db = getDB();
 
-/**
- * UPLOAD CARTAZ
- */
+    const cartaz = await db
+      .collection("cartazes")
+      .findOne({}, { sort: { createdAt: -1 } });
+
+    res.json(cartaz);
+  } catch (error) {
+    res.status(500).json({
+      message: "Failed to fetch cartaz",
+      error: error.message,
+    });
+  }
+});
+
+/* =========================================================
+   UPLOAD CARTAZ (ADMIN)
+   Only ONE cartaz active at a time
+========================================================= */
 router.post(
   "/",
   verifyToken,
@@ -63,6 +91,19 @@ router.post(
         return res.status(400).json({ message: "Image is required" });
       }
 
+      const db = getDB();
+
+      // Remove old cartaz (only one active)
+      const oldCartaz = await db
+        .collection("cartazes")
+        .findOne({}, { sort: { createdAt: -1 } });
+
+      if (oldCartaz) {
+        await cloudinary.uploader.destroy(oldCartaz.publicId);
+        await db.collection("cartazes").deleteOne({ _id: oldCartaz._id });
+      }
+
+      // Upload new image
       const result = await uploadToCloudinary(
         req.file.buffer,
         "cartazes"
@@ -72,31 +113,35 @@ router.post(
         title: req.body.title || "",
         imageUrl: result.secure_url,
         publicId: result.public_id,
-        createdAt: new Date()
+        createdAt: new Date(),
       };
 
-      const db = getDB();
       const saved = await db.collection("cartazes").insertOne(cartaz);
 
       res.status(201).json({
         message: "Cartaz uploaded successfully",
-        cartaz: { ...cartaz, _id: saved.insertedId }
+        cartaz: { ...cartaz, _id: saved.insertedId },
       });
     } catch (error) {
       res.status(500).json({
         message: "Upload failed",
-        error: error.message
+        error: error.message,
       });
     }
   }
 );
 
-/**
- * DELETE CARTAZ
- */
+/* =========================================================
+   DELETE CARTAZ (ADMIN)
+========================================================= */
 router.delete("/:id", verifyToken, async (req, res) => {
   try {
+    if (!ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: "Invalid cartaz ID" });
+    }
+
     const db = getDB();
+
     const cartaz = await db
       .collection("cartazes")
       .findOne({ _id: new ObjectId(req.params.id) });
@@ -107,15 +152,13 @@ router.delete("/:id", verifyToken, async (req, res) => {
 
     await cloudinary.uploader.destroy(cartaz.publicId);
 
-    await db
-      .collection("cartazes")
-      .deleteOne({ _id: cartaz._id });
+    await db.collection("cartazes").deleteOne({ _id: cartaz._id });
 
     res.json({ message: "Cartaz deleted successfully" });
   } catch (error) {
     res.status(500).json({
       message: "Delete failed",
-      error: error.message
+      error: error.message,
     });
   }
 });
